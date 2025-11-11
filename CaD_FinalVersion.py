@@ -18,7 +18,7 @@ from email.mime.multipart import MIMEMultipart
 import re
 
 # Connect to the database
-database = mysql.connector.connect(host="localhost", user="root", password="shoutaaoi4968", database="cad")
+database = mysql.connector.connect(host="localhost", user="root", password="", database="cad")
 cursor = database.cursor()
 
 
@@ -879,9 +879,9 @@ class LoginRegister:
         rc_operation_entry = tk.Entry(rc_operation_entry_frame, font=('Open Sans', 10), bg='#D0F9EF', fg='#858585', border=0,
                                       width=35)
         rc_operation_entry.place(x=10, y=12)
-        rc_operation_entry.insert(0, 'Enter Operation Hour: Daily, 9AM-10PM, except Sunday')
+        rc_operation_entry.insert(0, 'Enter Operation Hours')
         rc_operation_entry.bind('<FocusIn>', lambda event: self.focus_entry('entry', rc_operation_entry))
-        rc_operation_entry.bind('<FocusOut>', lambda event: self.leave_focus_entry('entry', rc_operation_entry, 'Enter Operation Hour: Daily, 9AM-10PM, except Sunday'))
+        rc_operation_entry.bind('<FocusOut>', lambda event: self.leave_focus_entry('entry', rc_operation_entry, 'Enter Operation Hours'))
         rc_operation_entry.bind('<Return>', lambda event: register_clinic())
 
         rc_address_label = tk.Label(self.frame, text='Address', font=('Open Sans', 12, 'bold'), bg='white', fg='#000000')
@@ -1933,20 +1933,21 @@ class User:
 
             # SECURE CODE:
             query_asc = """
-                SELECT ar.ar_id, ar.ar_detail, ar.ar_date, ar.ar_time, ar.ar_status, d.doctor_id, p.patient_address,
-                p.patient_name, p.patient_contact, p.patient_ic_passport, p.patient_gender, d.doctor_name
-                FROM appointment_request ar
-                LEFT JOIN patient p ON ar.patient_id = p.patient_id
-                LEFT JOIN clinic c ON ar.clinic_id = c.clinic_id
-                LEFT JOIN appointment a ON ar.ar_id = a.ar_id
-                LEFT JOIN doctor d ON a.doctor_id = d.doctor_id
-                WHERE ar.ar_status = %s AND p.user_id = %s
-                ORDER BY ar.ar_date, ar.ar_time;
-            """
+                        SELECT ar.ar_id, ar.ar_detail, ar.ar_date, ar.ar_time, ar.ar_status, ar.ar_doctor, d.doctor_id, p.patient_address,
+                        p.patient_name, p.patient_contact, p.patient_ic_passport, p.patient_gender, d.doctor_name,
+                        c.clinic_name
+                        FROM appointment_request ar
+                        LEFT JOIN patient p ON ar.patient_id = p.patient_id
+                        LEFT JOIN clinic c ON ar.clinic_id = c.clinic_id
+                        LEFT JOIN appointment a ON ar.ar_id = a.ar_id
+                        LEFT JOIN doctor d ON a.doctor_id = d.doctor_id
+                        WHERE ar.ar_status = %s AND p.user_id = %s
+                        ORDER BY ar.ar_date, ar.ar_time;
+                    """
 
 
             query_dsc = """
-                        SELECT ar.ar_id, ar.ar_detail, ar.ar_date, ar.ar_time, ar.ar_doctor, 
+                        SELECT ar.ar_id, ar.ar_detail, ar.ar_date, ar.ar_time, ar.ar_status, ar.ar_doctor, 
                         ar.ar_ifreject, a.appointment_prescription,
                         c.clinic_name, d.doctor_name
                         FROM appointment_request ar
@@ -1956,7 +1957,7 @@ class User:
                         LEFT JOIN patient p ON ar.patient_id = p.patient_id
                         WHERE ar.ar_status = %s AND p.user_id = %s
                         ORDER BY ar.ar_date DESC, ar.ar_time DESC;
-                        """
+                    """
 
             # For pending and ongoing, the appointments arranged in ascending datetime, indicating upcoming sequence
             if status == 'Request' or status == 'Ongoing':
@@ -6254,8 +6255,8 @@ class Admin:
         # Function for sending email to the clinic that submit the request
         #env file
         def send_email(to_email, subject, body):
-            from_email = "kuro2269@gmail.com"  # Replace with your email
-            from_password = "ksylkydjondvjufr"  # Replace with your generated app password
+            from_email = "seejiawei39@gmail.com"  # Replace with your email
+            from_password = "umxi ihnc zjcv tbeo"  # Replace with your generated app password
 
             msg = MIMEMultipart()
             msg['From'] = from_email
@@ -6273,7 +6274,7 @@ class Admin:
                 server.quit()
                 print("Email sent successfully")
             except Exception as e:
-                print(f"Failed to send email: {e}")
+                print(f"Failed to send email: {type(e).__name__}")
 
         def approve_request(cr_type, clinic_id, cr_id, clinic_email):
             # Update clinic request status
