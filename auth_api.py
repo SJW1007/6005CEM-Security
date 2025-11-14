@@ -947,9 +947,14 @@ def check_password_history(user_id: int, new_password: str, max_history: int = 5
         if current_password_hash and current_password_hash.strip():
             try:
                 if verify_password(new_password, current_password_hash):
+                    print(f"[DEBUG] Password reuse detected: new password matches current password for user_id {user_id}")
                     return False, f"Password cannot be one of your last {max_history} passwords. Please choose a different password."
             except Exception as e:
-                print(f"[WARN] Error verifying password against current hash: {e}")
+                print(f"[WARN] Error verifying password against current hash for user_id {user_id}: {e}")
+                import traceback
+                traceback.print_exc()
+                # If we can't verify against current password, continue to check history
+                # but this is a warning that should be investigated
         
         # Get the last N password hashes from history
         cursor.execute("""
@@ -965,13 +970,18 @@ def check_password_history(user_id: int, new_password: str, max_history: int = 5
         
         # Check if new password matches any previous password
         for (old_hash,) in history_rows:
+            if not old_hash or not old_hash.strip():
+                print(f"[WARN] Skipping empty password hash in history for user_id {user_id}")
+                continue
             try:
                 if verify_password(new_password, old_hash):
-                    print(f"[DEBUG] Password reuse detected for user_id {user_id}")
+                    print(f"[DEBUG] Password reuse detected: new password matches history entry for user_id {user_id}")
                     return False, f"Password cannot be one of your last {max_history} passwords. Please choose a different password."
             except Exception as e:
-                print(f"[WARN] Error verifying password against history hash: {e}")
-                # Continue checking other hashes
+                print(f"[WARN] Error verifying password against history hash for user_id {user_id}: {e}")
+                import traceback
+                traceback.print_exc()
+                # Continue checking other hashes - don't allow password if one check fails
                 continue
         
         print(f"[DEBUG] Password history check passed for user_id {user_id}")
@@ -3119,6 +3129,20 @@ def forgot_password_reset():
         # Get current password hash to save to history before updating
         current_password_hash = row['user_password']
         
+        # Check password history again after code verification (within transaction)
+        # This ensures we're checking against the most up-to-date password history
+        is_allowed, history_msg = check_password_history(row['user_id'], new_password, max_history=5, current_password_hash=current_password_hash)
+        if not is_allowed:
+            conn.rollback()
+            log_audit_event(
+                event_type='forgot_password_failed',
+                description=f"Password reset failed: password reuse detected (user_id: {row['user_id']})",
+                user_id=row['user_id'],
+                ip_address=client_ip,
+                metadata={'email': email, 'reason': 'password_reuse'}
+            )
+            return jsonify({'status': 'error', 'message': history_msg}), 400
+        
         # Update password
         cursor.execute("""
             UPDATE user
@@ -3137,11 +3161,25 @@ def forgot_password_reset():
             try:
                 save_password_to_history(row['user_id'], current_password_hash)
                 print(f"[INFO] Saved password to history for user_id: {row['user_id']}")
+                # Verify the password was actually saved to history
+                conn_history = get_db_connection()
+                cursor_history = conn_history.cursor()
+                try:
+                    cursor_history.execute("""
+                        SELECT COUNT(*) FROM password_history 
+                        WHERE user_id = %s AND password_hash = %s
+                    """, (row['user_id'], current_password_hash))
+                    saved_count = cursor_history.fetchone()[0]
+                    if saved_count == 0:
+                        print(f"[ERROR] Password history save verification failed for user_id: {row['user_id']}")
+                finally:
+                    cursor_history.close()
+                    conn_history.close()
             except Exception as e:
-                print(f"[WARN] Failed to save password to history: {e}")
+                print(f"[ERROR] Failed to save password to history: {e}")
                 import traceback
                 traceback.print_exc()
-                # Don't fail the password reset if history save fails
+                # Don't fail the password reset if history save fails, but log it as an error
 
         log_audit_event(
             event_type='password_reset',

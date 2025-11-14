@@ -1707,7 +1707,7 @@ class LoginRegister:
                 fg='green'
             )
             fp_validate_label.place(x=625, y=360)
-            fp_back_button.config(text='Back', command=lambda: show_login())
+            fp_back_button.config(text='Back', command=lambda: self.show_login())
             fp_back_button.place(x=645, y=460)
         
         self.reset()
@@ -2772,6 +2772,7 @@ class User:
         self.root_window = main_window
         self.login_register = login_register
         self.user_id = None
+        self.user_type = None
 
         self.cursor = None
 
@@ -2857,21 +2858,78 @@ class User:
         self.all_scrollable_frame[self.appointment_frame] = 0
         self.all_scrollable_frame[self.me_frame] = 0
 
+    def check_access(self):
+        """
+        RBAC Check: Verify if current user has 'user' role
+        Returns: True if authorized, False otherwise
+        """
+        if self.user_type != 'user':
+            messagebox.showerror(
+                'Access Denied',
+                'You do not have permission to access this page.\n'
+                'This page is only available for regular users.'
+            )
+            self.logout()
+            return False
+        return True
+
+    def run(self, user_id):
+        """
+        Initialize user session with RBAC check
+        """
+        # Get the user_id of current user
+        self.user_id = user_id
+
+        self.cursor = database.cursor(dictionary=True)
+
+        # RBAC: Fetch user type from database
+        try:
+            self.cursor.execute(
+                '''SELECT user_type FROM user WHERE user_id=%s''',
+                (self.user_id,)
+            )
+            result = self.cursor.fetchone()
+
+            if result:
+                self.user_type = result['user_type']
+            else:
+                messagebox.showerror('Error', 'User not found in database')
+                self.logout()
+                return
+
+            # RBAC: Check if user has correct role
+            if not self.check_access():
+                return
+
+        except Exception as e:
+            messagebox.showerror('Error', f'Failed to verify user permissions: {str(e)}')
+            self.logout()
+            return
+
+        self.window.deiconify()
+        self.refresh()
+
     def logout(self):
-        # Call handle_logout from LoginRegister if available (clears tokens and calls logout API)
+        """
+        Enhanced logout with user_type reset
+        """
+        # Call handle_logout from LoginRegister if available
         if self.login_register:
             self.login_register.handle_logout()
-            return  # handle_logout will show login screen
+            return
 
         # Fallback: basic logout if login_register not available
         # Re-initialize all necessary variables, ready for next user
         self.user_id = None
+        self.user_type = None  # Reset user type
 
         self.window.withdraw()
         self.root_window.deiconify()
 
-        self.cursor.close()
-        self.cursor = None
+        if self.cursor:
+            self.cursor.close()
+            self.cursor = None
+
         self.current_status = 'Request'
 
         self.clinic_images = {}
@@ -2886,17 +2944,14 @@ class User:
         self.all_scrollable_frame[self.appointment_frame] = 0
         self.all_scrollable_frame[self.me_frame] = 0
 
-    def run(self, user_id):
-        # Get the user_id of current user
-        self.user_id = user_id
-
-        self.cursor = database.cursor(dictionary=True)
-
-        self.window.deiconify()
-        self.refresh()
-
-    # Refresh and update the contents in all the frames
     def refresh(self):
+        """
+        Refresh with RBAC check
+        """
+        # RBAC: Verify access before refreshing
+        if not self.check_access():
+            return
+
         cursor.execute('''UPDATE appointment_request ar
                        JOIN patient p ON ar.patient_id = p.patient_id
                        SET ar.ar_status = 'canceled'
@@ -2918,6 +2973,8 @@ class User:
 
     # Pack the main frame as well as sub-frame correctly
     def show_activity_frame(self, bar_width, bar_x, frame):
+        if not self.check_access():
+            return
         self.navigation_bar.config(width=bar_width)
         self.navigation_bar.place(x=bar_x, y=85)
 
@@ -2978,6 +3035,8 @@ class User:
 
     # Set up the clinic section
     def set_up_clinic_frame(self):
+        if not self.check_access():
+            return
         # Remove the search keyword, move to the top of the list after reset the search
         def clear_search():
             search_entry.delete(0, tk.END)
@@ -3867,6 +3926,8 @@ class User:
 
     # Set up the appointment request section
     def set_up_appointment_frame(self):
+        if not self.check_access():
+            return
         # Select a status to view corresponding appointments
         def filter_appointments(status):
             self.current_status = status
@@ -4493,8 +4554,9 @@ class User:
         reset_back_button.place(x=20, y=15)
         save_button = ttk.Button(reset_frame, text='Save', style='green_button.TButton', cursor='hand2', width=6)
         save_button.place(x=945, y=15)
-        save_error_label = tk.Label(reset_frame, text='', anchor='e', font=('Open Sans', 8), bg='white', fg='red', width=30)
-        save_error_label.place(x=750, y=25)
+        save_error_label = tk.Label(reset_frame, text='', anchor='w', font=('Open Sans', 8), bg='white', fg='red',
+                                    width=60, wraplength=400, justify='left')
+        save_error_label.place(x=600, y=25)
         reset_canvas = tk.Canvas(reset_frame, width=1030, height=430, bg='white', highlightthickness=0)
         reset_canvas.place(x=0, y=75)
         reset_scrollbar = tk.Scrollbar(reset_frame, orient='vertical')
@@ -4645,6 +4707,7 @@ class Clinic:
         self.login_register = login_register
         self.user_id = None
         self.clinic_id = None
+        self.user_type = None
 
         self.cursor = None
 
@@ -4739,6 +4802,32 @@ class Clinic:
         self.all_scrollable_frame[self.doctor_list_frame] = 0
         self.all_scrollable_frame[self.me_frame] = 0
 
+    def verify_user_type(self):
+        """Verify that the current user is a clinic user"""
+        try:
+            cursor.execute('''SELECT user_type FROM user WHERE user_id=%s''', (self.user_id,))
+            result = cursor.fetchone()
+
+            if not result:
+                return False
+
+            self.user_type = result[0]
+            return self.user_type == 'clinic'
+        except Exception as e:
+            print(f"Error verifying user type: {e}")
+            return False
+
+    def handle_unauthorized_access(self):
+        """Handle unauthorized access attempts"""
+        messagebox.showerror(
+            'Unauthorized Access',
+            'You do not have permission to access the clinic dashboard. This area is restricted to clinic accounts only.'
+        )
+        if self.login_register:
+            self.login_register.handle_logout()
+        else:
+            self.logout()
+
     def logout(self):
         # Call handle_logout from LoginRegister if available (clears tokens and calls logout API)
         if self.login_register:
@@ -4748,6 +4837,7 @@ class Clinic:
         # Fallback: basic logout if login_register not available
         self.user_id = None
         self.clinic_id = None
+        self.user_type = None  # Clear user_type on logout
 
         self.cursor.close()
         self.cursor = None
@@ -4771,8 +4861,22 @@ class Clinic:
         self.all_scrollable_frame[self.doctor_list_frame] = 0
         self.all_scrollable_frame[self.me_frame] = 0
 
+    def validate_email(self, email):
+        """Validate email format (clinic context helper)."""
+        if not email:
+            return False
+        pattern = r'^[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,6}$'
+        return re.match(pattern, email) is not None
+
     def run(self, user_id):
         self.user_id = user_id
+
+        # RBAC Check #1: Verify user type is 'clinic'
+        if not self.verify_user_type():
+            self.handle_unauthorized_access()
+            return
+
+        # Proceed with existing clinic verification
         cursor.execute('''SELECT clinic_id, clinic_status FROM clinic WHERE user_id=%s''', (self.user_id,))
         clinic_row = cursor.fetchone()
 
@@ -4785,7 +4889,8 @@ class Clinic:
             return
 
         clinic_id, clinic_status = clinic_row
-        cursor.execute('''SELECT cr_status FROM clinic_request WHERE clinic_id=%s ORDER BY cr_datetime DESC LIMIT 1''', (clinic_id,))
+        cursor.execute('''SELECT cr_status FROM clinic_request WHERE clinic_id=%s ORDER BY cr_datetime DESC LIMIT 1''',
+                       (clinic_id,))
         request_row = cursor.fetchone()
         request_status = request_row[0] if request_row else None
 
@@ -4794,14 +4899,16 @@ class Clinic:
         effective_status = normalized_request_status or normalized_clinic_status or 'pending'
 
         if effective_status == 'pending':  # Pending
-            messagebox.showinfo('Pending Approval', 'Your clinic registration is pending admin approval. Please wait for approval before accessing the clinic dashboard.')
+            messagebox.showinfo('Pending Approval',
+                                'Your clinic registration is pending admin approval. Please wait for approval before accessing the clinic dashboard.')
             if self.login_register:
                 self.login_register.handle_logout()
             else:
                 self.logout()
             return
         elif effective_status == 'rejected':  # Rejected
-            messagebox.showerror('Registration Rejected', 'Your clinic registration has been rejected. Please contact admin for more information.')
+            messagebox.showerror('Registration Rejected',
+                                 'Your clinic registration has been rejected. Please contact admin for more information.')
             if self.login_register:
                 self.login_register.handle_logout()
             else:
@@ -4823,6 +4930,11 @@ class Clinic:
         self.refresh()
 
     def refresh(self):
+        # RBAC Check #2: Re-verify on refresh to prevent session hijacking
+        if not self.verify_user_type():
+            self.handle_unauthorized_access()
+            return
+
         cursor.execute('''UPDATE appointment_request ar
                           JOIN patient p ON ar.patient_id = p.patient_id
                           SET ar.ar_status = 'canceled'
@@ -4845,6 +4957,9 @@ class Clinic:
             self.show_activity_frame(60, 976, self.me_frame)
 
     def show_activity_frame(self, bar_width, bar_x, frame):
+        if not self.verify_user_type():
+            self.handle_unauthorized_access()
+            return
         self.navigation_bar.config(width=bar_width)
         self.navigation_bar.place(x=bar_x, y=85)
 
@@ -4903,6 +5018,9 @@ class Clinic:
         canvas.bind_all("<MouseWheel>", lambda event: self.on_mouse_wheel(event, canvas))
 
     def set_up_appointment_frame(self):
+        if not self.verify_user_type():
+            self.handle_unauthorized_access()
+            return
         def get_working(working_hours):
             time_format_12 = '%I%p'
             # Parse the working hours
@@ -5202,6 +5320,9 @@ class Clinic:
         display_appointments()
 
     def set_up_timetable_frame(self):
+        if not self.verify_user_type():
+            self.handle_unauthorized_access()
+            return
         def show_calendar():
             calendar_frame.place(x=150, y=85)
             calendar_frame.lift()
@@ -5446,6 +5567,9 @@ class Clinic:
         ttk.Button(calendar_buttons_frame, text="Cancel", command=hide_calendar).pack(side='left', padx=27, pady=(0, 10))
 
     def set_up_doctor_list_frame(self):
+        if not self.verify_user_type():
+            self.handle_unauthorized_access()
+            return
         def show_doctor_list():
             for widget in left_frame_content.winfo_children():
                 widget.destroy()
@@ -5497,9 +5621,10 @@ class Clinic:
                                 if len(doctor_password_entry.get()) >= 12:
                                     if doctor_password_entry.get() == doctor_confirmed_entry.get():
                                         doctor_validate_register_label.config(text='')
+                                        hashed_password = hash_password(doctor_password_entry.get())
                                         cursor.execute(
                                             '''INSERT INTO user (user_email, user_password, user_type) VALUES (%s, %s, %s)''',
-                                            (doctor_email, doctor_password_entry.get(), 'doctor'))
+                                            (doctor_email, hashed_password, 'doctor'))
                                         database.commit()
                                         cursor.execute('''SELECT user_id FROM user WHERE user_email=%s''',
                                                        (doctor_email,))
@@ -6087,6 +6212,9 @@ class Clinic:
         show_doctor_list()
 
     def set_up_me_frame(self):
+        if not self.verify_user_type():
+            self.handle_unauthorized_access()
+            return
         def show_personal():
             def edit_personal():
                 for entry in all_entries:
@@ -6277,108 +6405,198 @@ class Clinic:
             self.switch('personal', self.all_me_frame)
 
         def show_reset():
+            # Get user email for OTP flow
+            cursor.execute('''SELECT user_email FROM user WHERE user_id=%s''', (self.user_id, ))
+            user_email = cursor.fetchone()[0]
+
+            me_reset_step = {'current': 'otp'}
+            verified_otp = {'code': ''}
+
+            def request_otp():
+                reset_content_frame.focus_set()
+                try:
+                    resp = requests.post(
+                        FORGOT_PASSWORD_REQUEST_OTP_URL,
+                        json={'email': user_email},
+                        timeout=8
+                    )
+                except requests.exceptions.RequestException as e:
+                    save_error_label.config(text='Network error. Please check your connection.', fg='red')
+                    print(f"[ERROR] Clinic reset password OTP request failed: {e}")
+                    return
+
+                try:
+                    data = resp.json()
+                except ValueError:
+                    data = {}
+
+                if resp.status_code == 200:
+                    save_error_label.config(text='OTP sent to your email. Please check your inbox.', fg='green')
+                elif resp.status_code == 403:
+                    save_error_label.config(text=data.get('message', 'Email not verified or invalid user type'), fg='red')
+                elif resp.status_code == 400:
+                    save_error_label.config(text=data.get('message', 'Invalid request'), fg='red')
+                else:
+                    save_error_label.config(text=data.get('message', 'Failed to send OTP. Please try again.'), fg='red')
+
+            def show_step_otp():
+                me_reset_step['current'] = 'otp'
+                otp_label.grid(row=1, column=0, pady=(5, 0), sticky='n')
+                otp_entry_frame.grid(row=2, column=0, pady=(0, 5), sticky='n')
+                otp_button_frame.grid(row=3, column=0, pady=(5, 10), sticky='n')
+                new_label.grid_remove()
+                new_entry_frame.grid_remove()
+                confirm_label.grid_remove()
+                confirm_entry_frame.grid_remove()
+                save_button.state(['disabled'])
+                save_button.place_forget()
+                save_error_label.config(text='', fg='red')
+                otp_entry.delete(0, 'end')
+                otp_entry.insert(0, 'Enter OTP Code')
+                otp_entry.config(fg='#858585')
+
+            def show_step_password():
+                me_reset_step['current'] = 'password'
+                otp_label.grid_remove()
+                otp_entry_frame.grid_remove()
+                otp_button_frame.grid_remove()
+                new_label.grid(row=1, column=0, pady=(5, 0), sticky='n')
+                new_entry_frame.grid(row=2, column=0, pady=(0, 5), sticky='n')
+                confirm_label.grid(row=3, column=0, pady=(5, 0), sticky='n')
+                confirm_entry_frame.grid(row=4, column=0, pady=(0, 5), sticky='n')
+                save_button.place(x=945, y=15)
+                save_button.state(['!disabled'])
+                save_button.config(command=lambda: reset())
+                save_error_label.config(text='OTP verified. Please enter your new password.', fg='green')
+
             def reset():
                 reset_content_frame.focus_set()
-                if old_entry.cget('fg') == '#333333' and new_entry.cget('fg') == '#333333' and confirm_entry.cget('fg') == '#333333':
-                    # Get user email
-                    cursor.execute('''SELECT user_email FROM user WHERE user_id=%s''', (self.user_id, ))
-                    user_email = cursor.fetchone()[0]
-                    
-                    old_password = old_entry.get()
-                    new_password = new_entry.get()
-                    confirm_password = confirm_entry.get()
-                    
-                    # Check if fields are empty first
-                    if not old_password or not new_password or not confirm_password:
-                        save_error_label.config(text='Please fill in all details', fg='red')
-                        return
-                    
-                    # Client-side validation
-                    if new_password != confirm_password:
-                        save_error_label.config(text='Password does not match', fg='red')
-                        return
-                    
-                    is_valid, error_msg = validate_password_strength(new_password)
-                    if not is_valid:
-                        save_error_label.config(text=error_msg, fg='red')
-                        return
-                    
-                    # Call Change Password API
-                    try:
-                        resp = requests.post(
-                            CHANGE_PASSWORD_URL,
-                            json={
-                                'email': user_email,
-                                'old_password': old_password,
-                                'new_password': new_password,
-                                'confirm_password': confirm_password
-                            },
-                            timeout=8
-                        )
-                    except requests.exceptions.RequestException as e:
-                        save_error_label.config(text='Network error. Please check your connection.', fg='red')
-                        print(f"[ERROR] Password change failed: {e}")
-                        return
-                    
-                    try:
-                        data = resp.json()
-                    except ValueError:
-                        data = {}
-                    
-                    if resp.status_code == 200:
-                        save_error_label.config(text='', fg='green')
-                        messagebox.showinfo('Success', "Password Changed Successfully")
-                        show_personal()
-                    elif resp.status_code == 400:
-                        error_message = data.get('message', 'Invalid request')
-                        # Check if it's a password reuse error
-                        if 'last' in error_message.lower() and 'password' in error_message.lower():
-                            save_error_label.config(text=error_message, fg='red')
-                        else:
-                            save_error_label.config(text=error_message, fg='red')
-                    elif resp.status_code == 404:
-                        save_error_label.config(text=data.get('message', 'User not found'), fg='red')
+                otp_code = verified_otp['code'] or otp_entry.get().strip()
+                new_password = new_entry.get().strip()
+                confirm_password = confirm_entry.get().strip()
+
+                if (not otp_code or not new_password or new_password == 'Enter New Password'
+                        or not confirm_password or confirm_password == 'Re-enter New Password'):
+                    save_error_label.config(text='Please fill in all fields', fg='red')
+                    return
+
+                is_valid, error_msg = validate_password_strength(new_password)
+                if not is_valid:
+                    save_error_label.config(text=error_msg, fg='red')
+                    return
+
+                if new_password != confirm_password:
+                    save_error_label.config(text='Password does not match', fg='red')
+                    return
+
+                try:
+                    resp = requests.post(
+                        FORGOT_PASSWORD_VERIFY_URL,
+                        json={
+                            'email': user_email,
+                            'otp_code': otp_code,
+                            'new_password': new_password,
+                            'confirm_password': confirm_password
+                        },
+                        timeout=8
+                    )
+                except requests.exceptions.RequestException as e:
+                    save_error_label.config(text='Network error. Please check your connection.', fg='red')
+                    print(f"[ERROR] Clinic reset password failed: {e}")
+                    return
+
+                try:
+                    data = resp.json()
+                except ValueError:
+                    data = {}
+
+                if resp.status_code == 200:
+                    save_error_label.config(text='', fg='green')
+                    messagebox.showinfo('Success', "Reset Password Successfully")
+                    show_personal()
+                elif resp.status_code == 400:
+                    error_message = data.get('message', 'Invalid request')
+                    if 'last' in error_message.lower() and 'password' in error_message.lower():
+                        save_error_label.config(text=error_message, fg='red')
                     else:
-                        save_error_label.config(text=data.get('message', 'Password change failed'), fg='red')
+                        save_error_label.config(text=error_message, fg='red')
+                elif resp.status_code == 403:
+                    save_error_label.config(text=data.get('message', 'Access denied'), fg='red')
+                elif resp.status_code == 404:
+                    save_error_label.config(text=data.get('message', 'User not found'), fg='red')
                 else:
-                    save_error_label.config(text="Please fill in all details", fg='red')
+                    save_error_label.config(text=data.get('message', 'Password reset failed'), fg='red')
+
+            def verify_otp():
+                reset_content_frame.focus_set()
+                otp_code = otp_entry.get().strip()
+
+                if not otp_code:
+                    save_error_label.config(text='Please enter the OTP code', fg='red')
+                    return
+
+                try:
+                    resp = requests.post(
+                        FORGOT_PASSWORD_VERIFY_OTP_URL,
+                        json={
+                            'email': user_email,
+                            'otp_code': otp_code
+                        },
+                        timeout=8
+                    )
+                except requests.exceptions.RequestException as e:
+                    save_error_label.config(text='Network error. Please check your connection.', fg='red')
+                    print(f"[ERROR] Clinic reset password OTP verification failed: {e}")
+                    return
+
+                try:
+                    data = resp.json()
+                except ValueError:
+                    data = {}
+
+                if resp.status_code == 200:
+                    verified_otp['code'] = otp_code
+                    show_step_password()
+                elif resp.status_code in (400, 403, 404):
+                    save_error_label.config(text=data.get('message', 'OTP verification failed'), fg='red')
+                else:
+                    save_error_label.config(text=data.get('message', 'OTP verification failed'), fg='red')
 
             for widget in reset_content_frame.winfo_children():
                 widget.destroy()
 
-            save_error_label.config(text='')
+            save_error_label.config(text='', fg='red')
             save_button.config(command=lambda: reset())
+            save_button.state(['disabled'])
 
             reset_label = tk.Label(reset_content_frame, text='Reset Password',
                                    font=('Open Sans', 20, 'underline', 'bold'), bg='white', fg='#000000')
             reset_label.grid(row=0, column=0, columnspan=2, padx=35, pady=(10, 15), sticky='w')
 
-            old_label = tk.Label(reset_content_frame, text='Old Password', font=('Open Sans', 12, 'bold'), bg='white',
-                                         fg='#000000')
-            old_label.grid(row=1, column=0, padx=50, pady=(5, 0), sticky='w')
-            old_entry_frame = tk.Frame(reset_content_frame, bg='#D0F9EF', width=380, height=45)
-            old_entry_frame.grid(row=2, column=0, padx=53, pady=(0, 5))
-            old_entry = tk.Entry(old_entry_frame, font=('Open Sans', 10), bg='#D0F9EF', fg='#858585', border=0,
-                                 width=42, show='')
-            old_entry.place(x=10, y=13)
-            old_entry.insert(0, 'Enter Old Password')
-            old_eye_closed_button = ttk.Button(old_entry_frame, style='eye_closed_green.TButton', cursor='hand2')
-            old_eye_closed_button.place(x=330, y=2)
-            old_eye_opened_button = ttk.Button(old_entry_frame, style='eye_opened_green.TButton', cursor='hand2')
-            old_visibility = tk.Label(old_entry_frame, text='Close')
-            old_eye_closed_button.config(command=lambda: self.show_hide_password(old_entry, old_eye_opened_button,
-                                                                                 old_eye_closed_button, old_visibility))
-            old_eye_opened_button.config(command=lambda: self.show_hide_password(old_entry, old_eye_opened_button,
-                                                                                 old_eye_closed_button, old_visibility))
-            old_entry.bind('<FocusIn>', lambda event: self.focus_entry('password', old_entry, old_visibility))
-            old_entry.bind('<FocusOut>', lambda event: self.leave_focus_entry('password', old_entry, 'Enter Old Password'))
-            old_entry.bind('<Return>', lambda event: reset())
+            reset_content_frame.grid_columnconfigure(0, weight=1)
+
+            otp_label = tk.Label(reset_content_frame, text='OTP Code', font=('Open Sans', 12, 'bold'), bg='white',
+                                 fg='#000000')
+            otp_entry_frame = tk.Frame(reset_content_frame, bg='#D0F9EF', width=380, height=45)
+            otp_entry = tk.Entry(otp_entry_frame, font=('Open Sans', 10), bg='#D0F9EF', fg='#858585', border=0,
+                                 width=42)
+            otp_entry.place(x=10, y=13)
+            otp_entry.insert(0, 'Enter OTP Code')
+            otp_entry.bind('<FocusIn>', lambda event: self.focus_entry('entry', otp_entry))
+            otp_entry.bind('<FocusOut>', lambda event: self.leave_focus_entry('entry', otp_entry, 'Enter OTP Code'))
+            otp_entry.bind('<Return>', lambda event: verify_otp() if me_reset_step['current'] == 'otp' else reset())
+
+            otp_button_frame = tk.Frame(reset_content_frame, bg='white')
+            verify_otp_button = ttk.Button(otp_button_frame, text='Verify OTP', style='small_green.TButton',
+                                           cursor='hand2', width=18, command=lambda: verify_otp())
+            verify_otp_button.pack(side='left')
+            resend_otp_button = ttk.Button(otp_button_frame, text='Resend OTP', style='small_green.TButton',
+                                           cursor='hand2', width=15, command=lambda: request_otp())
+            resend_otp_button.pack(side='left', padx=(10, 0))
 
             new_label = tk.Label(reset_content_frame, text='New Password', font=('Open Sans', 12, 'bold'), bg='white',
                                  fg='#000000')
-            new_label.grid(row=3, column=0, padx=50, pady=(15, 0), sticky='w')
             new_entry_frame = tk.Frame(reset_content_frame, bg='#D0F9EF', width=380, height=45)
-            new_entry_frame.grid(row=4, column=0, padx=53, pady=(0, 5))
             new_entry = tk.Entry(new_entry_frame, font=('Open Sans', 10), bg='#D0F9EF', fg='#858585', border=0,
                                  width=42, show='')
             new_entry.place(x=10, y=13)
@@ -6395,10 +6613,11 @@ class Clinic:
             new_entry.bind('<FocusOut>', lambda event: self.leave_focus_entry('password', new_entry, 'Enter New Password'))
             new_entry.bind('<Return>', lambda event: reset())
 
+            confirm_label = tk.Label(reset_content_frame, text='Re-enter New Password', font=('Open Sans', 12, 'bold'),
+                                     bg='white', fg='#000000')
             confirm_entry_frame = tk.Frame(reset_content_frame, bg='#D0F9EF', width=380, height=45)
-            confirm_entry_frame.grid(row=5, column=0, padx=53, pady=(0, 5))
             confirm_entry = tk.Entry(confirm_entry_frame, font=('Open Sans', 10), bg='#D0F9EF', fg='#858585', border=0,
-                                 width=42, show='')
+                                     width=42, show='')
             confirm_entry.place(x=10, y=13)
             confirm_entry.insert(0, 'Re-enter New Password')
             confirm_eye_closed_button = ttk.Button(confirm_entry_frame, style='eye_closed_green.TButton', cursor='hand2')
@@ -6412,6 +6631,17 @@ class Clinic:
             confirm_entry.bind('<FocusIn>', lambda event: self.focus_entry('password', confirm_entry, confirm_visibility))
             confirm_entry.bind('<FocusOut>', lambda event: self.leave_focus_entry('password', confirm_entry, 'Re-enter New Password'))
             confirm_entry.bind('<Return>', lambda event: reset())
+
+            otp_entry_frame.grid_columnconfigure(0, weight=1)
+            new_entry_frame.grid_columnconfigure(0, weight=1)
+            confirm_entry_frame.grid_columnconfigure(0, weight=1)
+
+            otp_entry_frame.grid(row=2, column=0, pady=(0, 5), sticky='n')
+            confirm_entry_frame.grid(row=4, column=0, pady=(0, 5), sticky='n')
+
+            # Automatically request OTP when reset password page is shown
+            request_otp()
+            show_step_otp()
 
             self.switch('reset', self.all_me_frame)
 
@@ -6540,8 +6770,9 @@ class Clinic:
         reset_back_button.place(x=20, y=15)
         save_button = ttk.Button(reset_frame, text='Save', style='green_button.TButton', cursor='hand2', width=6)
         save_button.place(x=945, y=15)
-        save_error_label = tk.Label(reset_frame, text='', anchor='e', font=('Open Sans', 8), bg='white', fg='red', width=30)
-        save_error_label.place(x=750, y=25)
+        save_error_label = tk.Label(reset_frame, text='', anchor='w', font=('Open Sans', 8), bg='white', fg='red',
+                                    width=60, wraplength=400, justify='left')
+        save_error_label.place(x=600, y=25)
         reset_canvas = tk.Canvas(reset_frame, width=1030, height=430, bg='white', highlightthickness=0)
         reset_canvas.place(x=0, y=75)
         reset_scrollbar = tk.Scrollbar(reset_frame, orient='vertical')
@@ -6726,6 +6957,7 @@ class Doctor:
         self.login_register = login_register
         self.user_id = None
         self.doctor_id = None
+        self.user_type = None
 
         self.cursor = None
 
@@ -6800,6 +7032,27 @@ class Doctor:
         self.all_scrollable_frame[self.timetable_frame] = 0
         self.all_scrollable_frame[self.me_frame] = 0
 
+    def check_access_permission(self):
+        """
+        Verify that the user has doctor role.
+        Returns True if authorized, False otherwise.
+        """
+        try:
+            cursor.execute('''SELECT user_type FROM user WHERE user_id=%s''', (self.user_id,))
+            result = cursor.fetchone()
+
+            if result:
+                self.user_type = result[0]
+                return self.user_type == 'doctor'
+            return False
+        except Exception as e:
+            print(f"[ERROR] Access check failed: {e}")
+            return False
+
+    def on_window_close(self):
+        """Handle window close event"""
+        self.logout()
+
     def logout(self):
         # Call handle_logout from LoginRegister if available (clears tokens and calls logout API)
         if self.login_register:
@@ -6809,12 +7062,14 @@ class Doctor:
         # Fallback: basic logout if login_register not available
         self.user_id = None
         self.doctor_id = None
+        self.user_type = None
 
         self.window.withdraw()
         self.root_window.deiconify()
 
-        self.cursor.close()
-        self.cursor = None
+        if self.cursor:
+            self.cursor.close()
+            self.cursor = None
 
         self.all_patient_frame = {}
         self.all_me_frame = {}
@@ -6826,16 +7081,59 @@ class Doctor:
         self.all_scrollable_frame[self.me_frame] = 0
 
     def run(self, user_id):
+        """
+        Initialize and run the doctor interface.
+        Performs RBAC check before allowing access.
+        """
         self.user_id = user_id
-        cursor.execute('''SELECT doctor_id FROM doctor WHERE user_id=%s''', (self.user_id,))
-        self.doctor_id = cursor.fetchone()[0]
 
-        self.cursor = database.cursor(dictionary=True)
+        # RBAC Check: Verify user is a doctor
+        if not self.check_access_permission():
+            messagebox.showerror(
+                'Access Denied',
+                'You do not have permission to access the Doctor interface.\n'
+                'Only users with Doctor role can access this page.'
+            )
+            self.logout()
+            return
 
-        self.window.deiconify()
-        self.refresh()
+        try:
+            # Fetch doctor_id
+            cursor.execute('''SELECT doctor_id FROM doctor WHERE user_id=%s''', (self.user_id,))
+            result = cursor.fetchone()
+
+            if not result:
+                messagebox.showerror(
+                    'Error',
+                    'Doctor profile not found. Please contact administrator.'
+                )
+                self.logout()
+                return
+
+            self.doctor_id = result[0]
+            self.cursor = database.cursor(dictionary=True)
+
+            self.window.deiconify()
+            self.refresh()
+
+        except Exception as e:
+            print(f"[ERROR] Failed to initialize doctor interface: {e}")
+            messagebox.showerror(
+                'Error',
+                'Failed to load doctor interface. Please try again.'
+            )
+            self.logout()
 
     def refresh(self):
+        # Additional RBAC check on refresh
+        if not self.check_access_permission():
+            messagebox.showerror(
+                'Access Denied',
+                'Your access permissions have changed. Logging out.'
+            )
+            self.logout()
+            return
+
         cursor.execute('''UPDATE appointment_request ar
                           JOIN patient p ON ar.patient_id = p.patient_id
                           SET ar.ar_status = 'canceled'
@@ -6855,6 +7153,13 @@ class Doctor:
             self.show_activity_frame(60, 976, self.me_frame)
 
     def show_activity_frame(self, bar_width, bar_x, frame):
+        if not self.check_access_permission():
+            messagebox.showerror(
+                'Access Denied',
+                'Your access permissions have changed. Logging out.'
+            )
+            self.logout()
+            return
         self.navigation_bar.config(width=bar_width)
         self.navigation_bar.place(x=bar_x, y=85)
 
@@ -6907,6 +7212,13 @@ class Doctor:
 
     # Set up patient request section
     def set_up_patient_frame(self):
+        if not self.check_access_permission():
+            messagebox.showerror(
+                'Access Denied',
+                'Your access permissions have changed. Logging out.'
+            )
+            self.logout()
+            return
         def show_patient_appointment():
             for widget in appointment_scrollable_frame.winfo_children():
                 widget.destroy()
@@ -7325,6 +7637,13 @@ class Doctor:
         show_patient_appointment()
 
     def set_up_timetable_frame(self):
+        if not self.check_access_permission():
+            messagebox.showerror(
+                'Access Denied',
+                'Your access permissions have changed. Logging out.'
+            )
+            self.logout()
+            return
         def show_calendar():
             calendar_frame.place(x=400, y=85)
             calendar_frame.lift()
@@ -7524,6 +7843,13 @@ class Doctor:
         ttk.Button(calendar_buttons_frame, text="Cancel", command=hide_calendar).pack(side='left', padx=27, pady=(0, 10))
 
     def set_up_me_frame(self):
+        if not self.check_access_permission():
+            messagebox.showerror(
+                'Access Denied',
+                'Your access permissions have changed. Logging out.'
+            )
+            self.logout()
+            return
         def show_personal():
             def edit_personal():
                 for entry in all_entries:
@@ -7761,108 +8087,197 @@ class Doctor:
             self.switch('personal', self.all_me_frame)
 
         def show_reset():
+            cursor.execute('''SELECT user_email FROM user WHERE user_id=%s''', (self.user_id, ))
+            user_email = cursor.fetchone()[0]
+
+            me_reset_step = {'current': 'otp'}
+            verified_otp = {'code': ''}
+
+            def request_otp():
+                reset_content_frame.focus_set()
+                try:
+                    resp = requests.post(
+                        FORGOT_PASSWORD_REQUEST_OTP_URL,
+                        json={'email': user_email},
+                        timeout=8
+                    )
+                except requests.exceptions.RequestException as e:
+                    save_error_label.config(text='Network error. Please check your connection.', fg='red')
+                    print(f"[ERROR] Doctor reset password OTP request failed: {e}")
+                    return
+
+                try:
+                    data = resp.json()
+                except ValueError:
+                    data = {}
+
+                if resp.status_code == 200:
+                    save_error_label.config(text='OTP sent to your email. Please check your inbox.', fg='green')
+                elif resp.status_code == 403:
+                    save_error_label.config(text=data.get('message', 'Email not verified or invalid user type'), fg='red')
+                elif resp.status_code == 400:
+                    save_error_label.config(text=data.get('message', 'Invalid request'), fg='red')
+                else:
+                    save_error_label.config(text=data.get('message', 'Failed to send OTP. Please try again.'), fg='red')
+
+            def show_step_otp():
+                me_reset_step['current'] = 'otp'
+                otp_label.grid(row=1, column=0, pady=(5, 0), sticky='n')
+                otp_entry_frame.grid(row=2, column=0, pady=(0, 5), sticky='n')
+                otp_button_frame.grid(row=3, column=0, pady=(5, 10), sticky='n')
+                new_label.grid_remove()
+                new_entry_frame.grid_remove()
+                confirm_label.grid_remove()
+                confirm_entry_frame.grid_remove()
+                save_button.state(['disabled'])
+                save_button.place_forget()
+                save_error_label.config(text='', fg='red')
+                otp_entry.delete(0, 'end')
+                otp_entry.insert(0, 'Enter OTP Code')
+                otp_entry.config(fg='#858585')
+
+            def show_step_password():
+                me_reset_step['current'] = 'password'
+                otp_label.grid_remove()
+                otp_entry_frame.grid_remove()
+                otp_button_frame.grid_remove()
+                new_label.grid(row=1, column=0, pady=(5, 0), sticky='n')
+                new_entry_frame.grid(row=2, column=0, pady=(0, 5), sticky='n')
+                confirm_label.grid(row=3, column=0, pady=(5, 0), sticky='n')
+                confirm_entry_frame.grid(row=4, column=0, pady=(0, 5), sticky='n')
+                save_button.place(x=945, y=15)
+                save_button.state(['!disabled'])
+                save_button.config(command=lambda: reset())
+                save_error_label.config(text='OTP verified. Please enter your new password.', fg='green')
+
             def reset():
                 reset_content_frame.focus_set()
-                if old_entry.cget('fg') == '#333333' and new_entry.cget('fg') == '#333333' and confirm_entry.cget('fg') == '#333333':
-                    # Get user email
-                    cursor.execute('''SELECT user_email FROM user WHERE user_id=%s''', (self.user_id, ))
-                    user_email = cursor.fetchone()[0]
-                    
-                    old_password = old_entry.get()
-                    new_password = new_entry.get()
-                    confirm_password = confirm_entry.get()
-                    
-                    # Check if fields are empty first
-                    if not old_password or not new_password or not confirm_password:
-                        save_error_label.config(text='Please fill in all details', fg='red')
-                        return
-                    
-                    # Client-side validation
-                    if new_password != confirm_password:
-                        save_error_label.config(text='Password does not match', fg='red')
-                        return
-                    
-                    is_valid, error_msg = validate_password_strength(new_password)
-                    if not is_valid:
-                        save_error_label.config(text=error_msg, fg='red')
-                        return
-                    
-                    # Call Change Password API
-                    try:
-                        resp = requests.post(
-                            CHANGE_PASSWORD_URL,
-                            json={
-                                'email': user_email,
-                                'old_password': old_password,
-                                'new_password': new_password,
-                                'confirm_password': confirm_password
-                            },
-                            timeout=8
-                        )
-                    except requests.exceptions.RequestException as e:
-                        save_error_label.config(text='Network error. Please check your connection.', fg='red')
-                        print(f"[ERROR] Password change failed: {e}")
-                        return
-                    
-                    try:
-                        data = resp.json()
-                    except ValueError:
-                        data = {}
-                    
-                    if resp.status_code == 200:
-                        save_error_label.config(text='', fg='green')
-                        messagebox.showinfo('Success', "Password Changed Successfully")
-                        show_personal()
-                    elif resp.status_code == 400:
-                        error_message = data.get('message', 'Invalid request')
-                        # Check if it's a password reuse error
-                        if 'last' in error_message.lower() and 'password' in error_message.lower():
-                            save_error_label.config(text=error_message, fg='red')
-                        else:
-                            save_error_label.config(text=error_message, fg='red')
-                    elif resp.status_code == 404:
-                        save_error_label.config(text=data.get('message', 'User not found'), fg='red')
+                otp_code = verified_otp['code'] or otp_entry.get().strip()
+                new_password = new_entry.get().strip()
+                confirm_password = confirm_entry.get().strip()
+
+                if (not otp_code or not new_password or new_password == 'Enter New Password'
+                        or not confirm_password or confirm_password == 'Re-enter New Password'):
+                    save_error_label.config(text='Please fill in all fields', fg='red')
+                    return
+
+                is_valid, error_msg = validate_password_strength(new_password)
+                if not is_valid:
+                    save_error_label.config(text=error_msg, fg='red')
+                    return
+
+                if new_password != confirm_password:
+                    save_error_label.config(text='Password does not match', fg='red')
+                    return
+
+                try:
+                    resp = requests.post(
+                        FORGOT_PASSWORD_VERIFY_URL,
+                        json={
+                            'email': user_email,
+                            'otp_code': otp_code,
+                            'new_password': new_password,
+                            'confirm_password': confirm_password
+                        },
+                        timeout=8
+                    )
+                except requests.exceptions.RequestException as e:
+                    save_error_label.config(text='Network error. Please check your connection.', fg='red')
+                    print(f"[ERROR] Doctor reset password failed: {e}")
+                    return
+
+                try:
+                    data = resp.json()
+                except ValueError:
+                    data = {}
+
+                if resp.status_code == 200:
+                    save_error_label.config(text='', fg='green')
+                    messagebox.showinfo('Success', "Reset Password Successfully")
+                    show_personal()
+                elif resp.status_code == 400:
+                    error_message = data.get('message', 'Invalid request')
+                    if 'last' in error_message.lower() and 'password' in error_message.lower():
+                        save_error_label.config(text=error_message, fg='red')
                     else:
-                        save_error_label.config(text=data.get('message', 'Password change failed'), fg='red')
+                        save_error_label.config(text=error_message, fg='red')
+                elif resp.status_code == 403:
+                    save_error_label.config(text=data.get('message', 'Access denied'), fg='red')
+                elif resp.status_code == 404:
+                    save_error_label.config(text=data.get('message', 'User not found'), fg='red')
                 else:
-                    save_error_label.config(text="Please fill in all details", fg='red')
+                    save_error_label.config(text=data.get('message', 'Password reset failed'), fg='red')
+
+            def verify_otp():
+                reset_content_frame.focus_set()
+                otp_code = otp_entry.get().strip()
+
+                if not otp_code:
+                    save_error_label.config(text='Please enter the OTP code', fg='red')
+                    return
+
+                try:
+                    resp = requests.post(
+                        FORGOT_PASSWORD_VERIFY_OTP_URL,
+                        json={
+                            'email': user_email,
+                            'otp_code': otp_code
+                        },
+                        timeout=8
+                    )
+                except requests.exceptions.RequestException as e:
+                    save_error_label.config(text='Network error. Please check your connection.', fg='red')
+                    print(f"[ERROR] Doctor reset password OTP verification failed: {e}")
+                    return
+
+                try:
+                    data = resp.json()
+                except ValueError:
+                    data = {}
+
+                if resp.status_code == 200:
+                    verified_otp['code'] = otp_code
+                    show_step_password()
+                elif resp.status_code in (400, 403, 404):
+                    save_error_label.config(text=data.get('message', 'OTP verification failed'), fg='red')
+                else:
+                    save_error_label.config(text=data.get('message', 'OTP verification failed'), fg='red')
 
             for widget in reset_content_frame.winfo_children():
                 widget.destroy()
 
-            save_error_label.config(text='')
+            save_error_label.config(text='', fg='red')
             save_button.config(command=lambda: reset())
+            save_button.state(['disabled'])
 
             reset_label = tk.Label(reset_content_frame, text='Reset Password',
                                    font=('Open Sans', 20, 'underline', 'bold'), bg='white', fg='#000000')
             reset_label.grid(row=0, column=0, columnspan=2, padx=35, pady=(10, 15), sticky='w')
 
-            old_label = tk.Label(reset_content_frame, text='Old Password', font=('Open Sans', 12, 'bold'), bg='white',
-                                         fg='#000000')
-            old_label.grid(row=1, column=0, padx=50, pady=(5, 0), sticky='w')
-            old_entry_frame = tk.Frame(reset_content_frame, bg='#D0F9EF', width=380, height=45)
-            old_entry_frame.grid(row=2, column=0, padx=53, pady=(0, 5))
-            old_entry = tk.Entry(old_entry_frame, font=('Open Sans', 10), bg='#D0F9EF', fg='#858585', border=0,
-                                 width=42, show='')
-            old_entry.place(x=10, y=13)
-            old_entry.insert(0, 'Enter Old Password')
-            old_eye_closed_button = ttk.Button(old_entry_frame, style='eye_closed_green.TButton', cursor='hand2')
-            old_eye_closed_button.place(x=330, y=2)
-            old_eye_opened_button = ttk.Button(old_entry_frame, style='eye_opened_green.TButton', cursor='hand2')
-            old_visibility = tk.Label(old_entry_frame, text='Close')
-            old_eye_closed_button.config(command=lambda: self.show_hide_password(old_entry, old_eye_opened_button,
-                                                                                 old_eye_closed_button, old_visibility))
-            old_eye_opened_button.config(command=lambda: self.show_hide_password(old_entry, old_eye_opened_button,
-                                                                                 old_eye_closed_button, old_visibility))
-            old_entry.bind('<FocusIn>', lambda event: self.focus_entry('password', old_entry, old_visibility))
-            old_entry.bind('<FocusOut>', lambda event: self.leave_focus_entry('password', old_entry, 'Enter Old Password'))
-            old_entry.bind('<Return>', lambda event: reset())
+            reset_content_frame.grid_columnconfigure(0, weight=1)
+
+            otp_label = tk.Label(reset_content_frame, text='OTP Code', font=('Open Sans', 12, 'bold'), bg='white',
+                                 fg='#000000')
+            otp_entry_frame = tk.Frame(reset_content_frame, bg='#D0F9EF', width=380, height=45)
+            otp_entry = tk.Entry(otp_entry_frame, font=('Open Sans', 10), bg='#D0F9EF', fg='#858585', border=0,
+                                 width=42)
+            otp_entry.place(x=10, y=13)
+            otp_entry.insert(0, 'Enter OTP Code')
+            otp_entry.bind('<FocusIn>', lambda event: self.focus_entry('entry', otp_entry))
+            otp_entry.bind('<FocusOut>', lambda event: self.leave_focus_entry('entry', otp_entry, 'Enter OTP Code'))
+            otp_entry.bind('<Return>', lambda event: verify_otp() if me_reset_step['current'] == 'otp' else reset())
+
+            otp_button_frame = tk.Frame(reset_content_frame, bg='white')
+            verify_otp_button = ttk.Button(otp_button_frame, text='Verify OTP', style='small_green.TButton',
+                                           cursor='hand2', width=18, command=lambda: verify_otp())
+            verify_otp_button.pack(side='left')
+            resend_otp_button = ttk.Button(otp_button_frame, text='Resend OTP', style='small_green.TButton',
+                                           cursor='hand2', width=15, command=lambda: request_otp())
+            resend_otp_button.pack(side='left', padx=(10, 0))
 
             new_label = tk.Label(reset_content_frame, text='New Password', font=('Open Sans', 12, 'bold'), bg='white',
                                  fg='#000000')
-            new_label.grid(row=3, column=0, padx=50, pady=(15, 0), sticky='w')
             new_entry_frame = tk.Frame(reset_content_frame, bg='#D0F9EF', width=380, height=45)
-            new_entry_frame.grid(row=4, column=0, padx=53, pady=(0, 5))
             new_entry = tk.Entry(new_entry_frame, font=('Open Sans', 10), bg='#D0F9EF', fg='#858585', border=0,
                                  width=42, show='')
             new_entry.place(x=10, y=13)
@@ -7879,10 +8294,11 @@ class Doctor:
             new_entry.bind('<FocusOut>', lambda event: self.leave_focus_entry('password', new_entry, 'Enter New Password'))
             new_entry.bind('<Return>', lambda event: reset())
 
+            confirm_label = tk.Label(reset_content_frame, text='Re-enter New Password', font=('Open Sans', 12, 'bold'),
+                                     bg='white', fg='#000000')
             confirm_entry_frame = tk.Frame(reset_content_frame, bg='#D0F9EF', width=380, height=45)
-            confirm_entry_frame.grid(row=5, column=0, padx=53, pady=(0, 5))
             confirm_entry = tk.Entry(confirm_entry_frame, font=('Open Sans', 10), bg='#D0F9EF', fg='#858585', border=0,
-                                 width=42, show='')
+                                     width=42, show='')
             confirm_entry.place(x=10, y=13)
             confirm_entry.insert(0, 'Re-enter New Password')
             confirm_eye_closed_button = ttk.Button(confirm_entry_frame, style='eye_closed_green.TButton', cursor='hand2')
@@ -7896,6 +8312,16 @@ class Doctor:
             confirm_entry.bind('<FocusIn>', lambda event: self.focus_entry('password', confirm_entry, confirm_visibility))
             confirm_entry.bind('<FocusOut>', lambda event: self.leave_focus_entry('password', confirm_entry, 'Re-enter New Password'))
             confirm_entry.bind('<Return>', lambda event: reset())
+
+            otp_entry_frame.grid_columnconfigure(0, weight=1)
+            new_entry_frame.grid_columnconfigure(0, weight=1)
+            confirm_entry_frame.grid_columnconfigure(0, weight=1)
+
+            otp_entry_frame.grid(row=2, column=0, pady=(0, 5), sticky='n')
+            confirm_entry_frame.grid(row=4, column=0, pady=(0, 5), sticky='n')
+
+            request_otp()
+            show_step_otp()
 
             self.switch('reset', self.all_me_frame)
 
@@ -7930,7 +8356,7 @@ class Doctor:
         reset_back_button.place(x=20, y=15)
         save_button = ttk.Button(reset_frame, text='Save', style='green_button.TButton', cursor='hand2', width=6)
         save_button.place(x=945, y=15)
-        save_error_label = tk.Label(reset_frame, text='', anchor='e', font=('Open Sans', 8), bg='white', fg='red', width=30)
+        save_error_label = tk.Label(reset_frame, text='', anchor='e', font=('Open Sans', 8), bg='white', fg='red', width=60)
         save_error_label.place(x=750, y=25)
         reset_canvas = tk.Canvas(reset_frame, width=1030, height=430, bg='white', highlightthickness=0)
         reset_canvas.place(x=0, y=75)
@@ -8097,6 +8523,7 @@ class Admin:
         self.login_register = login_register
         self.user_id = None
         self.admin_token = None
+        self.user_type = None
 
         self.cursor = None
 
@@ -8143,17 +8570,17 @@ class Admin:
                            bg='white', fg='#166E82')
         nf_name.place(x=90, y=20)
         nf_name.bind('<Button-1>', lambda event: self.refresh())
-        nf_clinic_button = ttk.Button(self.navigation_frame, text='Clinic', style='navigation.TButton', width=5,
+        self.nf_clinic_button = ttk.Button(self.navigation_frame, text='Clinic', style='navigation.TButton', width=5,
                                       command=lambda: self.show_activity_frame(90, 482, self.clinic_frame))
-        nf_clinic_button.place(x=480, y=30)
-        nf_clinic_request_button = ttk.Button(self.navigation_frame, text='Clinic Request', style='navigation.TButton',
+        self.nf_clinic_button.place(x=480, y=30)
+        self.nf_clinic_request_button = ttk.Button(self.navigation_frame, text='Clinic Request', style='navigation.TButton',
                                               width=13,
                                               command=lambda: self.show_activity_frame(210, 602,
                                                                                        self.clinic_request_frame))
-        nf_clinic_request_button.place(x=600, y=30)
-        nf_security_button = ttk.Button(self.navigation_frame, text='Security', style='navigation.TButton', width=9,
+        self.nf_clinic_request_button.place(x=600, y=30)
+        self.nf_security_button = ttk.Button(self.navigation_frame, text='Security', style='navigation.TButton', width=9,
                                         command=lambda: self.show_activity_frame(120, 840, self.security_frame))
-        nf_security_button.place(x=825, y=30)
+        self.nf_security_button.place(x=825, y=30)
         nf_me_button = ttk.Button(self.navigation_frame, text='Me', style='navigation.TButton', width=3,
                                   command=lambda: self.show_activity_frame(60, 976, self.me_frame))
         nf_me_button.place(x=975, y=30)
@@ -8182,6 +8609,29 @@ class Admin:
         # Track current security tab
         self.current_security_tab = 'Statistics'
 
+    def check_access_and_show(self, page_name, bar_width, bar_x, frame):
+        """Check if user has admin access before showing the page"""
+        if self.user_type != 'admin':
+            messagebox.showerror('Access Denied',
+                                 f'You do not have permission to access {page_name}.\nOnly administrators can access this page.')
+            return
+
+        # If user is admin, proceed to show the frame
+        self.show_activity_frame(bar_width, bar_x, frame)
+
+    def configure_navigation_access(self):
+        """Configure navigation buttons visibility based on user type"""
+        if self.user_type == 'admin':
+            # Admin can see all buttons
+            self.nf_clinic_button.config(state='normal')
+            self.nf_clinic_request_button.config(state='normal')
+            self.nf_security_button.config(state='normal')
+        else:
+            # Non-admin users cannot see admin-only buttons
+            self.nf_clinic_button.config(state='disabled')
+            self.nf_clinic_request_button.config(state='disabled')
+            self.nf_security_button.config(state='disabled')
+
     def logout(self):
         # Call handle_logout from LoginRegister if available (clears tokens and calls logout API)
         if self.login_register:
@@ -8191,6 +8641,7 @@ class Admin:
         # Fallback: basic logout if login_register not available
         self.user_id = None
         self.admin_token = None
+        self.user_type = None  # ADD: Clear user type
 
         if self.cursor:
             self.cursor.close()
@@ -8213,11 +8664,24 @@ class Admin:
         self.all_scrollable_frame[self.security_frame] = 0
         self.all_scrollable_frame[self.me_frame] = 0
 
-    def run(self, user_id, admin_token=None):
+    def run(self, user_id, admin_token=None, user_type=None):  # ADD: user_type parameter
         self.user_id = user_id
         self.admin_token = admin_token
+        self.user_type = user_type  # ADD: Store user type
+
+        # ADD: If user_type not provided, fetch from database
+        if not self.user_type:
+            cursor = database.cursor(dictionary=True)
+            cursor.execute('''SELECT user_type FROM user WHERE user_id=%s''', (user_id,))
+            user_data = cursor.fetchone()
+            if user_data:
+                self.user_type = user_data['user_type']
+            cursor.close()
 
         self.cursor = database.cursor(dictionary=True)
+
+        # ADD: Configure navigation access based on user type
+        self.configure_navigation_access()
 
         self.window.deiconify()
         self.refresh()
@@ -8262,6 +8726,11 @@ class Admin:
         Returns response object or None if failed.
         Validates refresh token before attempting refresh.
         """
+        # ADD: Check if user is admin before making API calls
+        if self.user_type != 'admin':
+            print("[WARNING] Non-admin user attempted to make admin API call")
+            return None
+
         # If no JWT token, try to refresh first (if refresh token exists and is valid)
         if not self.admin_token:
             if not self.refresh_jwt_token():
@@ -8319,24 +8788,37 @@ class Admin:
             return None
 
     def refresh(self):
-        cursor.execute('''UPDATE appointment_request ar
-                          JOIN patient p ON ar.patient_id = p.patient_id
-                          SET ar.ar_status = 'canceled'
-                          WHERE CONCAT(ar.ar_date, ' ', ar.ar_time) < NOW()
-                          AND ar.ar_status IN ('pending', 'ongoing')''')
-        database.commit()
+        # ADD: RBAC check - only admin can perform database operations
+        if self.user_type == 'admin':
+            cursor.execute('''UPDATE appointment_request ar
+                              JOIN patient p ON ar.patient_id = p.patient_id
+                              SET ar.ar_status = 'canceled'
+                              WHERE CONCAT(ar.ar_date, ' ', ar.ar_time) < NOW()
+                              AND ar.ar_status IN ('pending', 'ongoing')''')
+            database.commit()
 
-        self.set_up_clinic_request_frame()
+            self.set_up_clinic_request_frame()
+            self.set_up_clinic_frame()
+            self.set_up_security_frame()
+
+        # All users can access Me frame
         self.set_up_me_frame()
-        self.set_up_clinic_frame()
-        self.set_up_security_frame()
 
         if self.all_scrollable_frame[self.clinic_frame] == 1:
-            self.show_activity_frame(90, 482, self.clinic_frame)
+            if self.user_type == 'admin':
+                self.show_activity_frame(90, 482, self.clinic_frame)
+            else:
+                self.show_activity_frame(60, 976, self.me_frame)
         elif self.all_scrollable_frame[self.clinic_request_frame] == 1:
-            self.show_activity_frame(210, 602, self.clinic_request_frame)
+            if self.user_type == 'admin':
+                self.show_activity_frame(210, 602, self.clinic_request_frame)
+            else:
+                self.show_activity_frame(60, 976, self.me_frame)
         elif self.all_scrollable_frame[self.security_frame] == 1:
-            self.show_activity_frame(120, 840, self.security_frame)
+            if self.user_type == 'admin':
+                self.show_activity_frame(120, 840, self.security_frame)
+            else:
+                self.show_activity_frame(60, 976, self.me_frame)
         elif self.all_scrollable_frame[self.me_frame] == 1:
             self.show_activity_frame(60, 976, self.me_frame)
 
@@ -8361,6 +8843,9 @@ class Admin:
 
         # Repopulate content if frame is empty or needs refresh
         if frame == self.clinic_frame:
+            # ADD: RBAC check
+            if self.user_type != 'admin':
+                return
             # Check if clinic frame needs to be populated
             if len(self.all_clinic_frames) == 0:
                 self.set_up_clinic_frame()
@@ -8370,6 +8855,9 @@ class Admin:
                 if active:
                     self.switch(k, self.all_clinic_frames)
         elif frame == self.clinic_request_frame:
+            # ADD: RBAC check
+            if self.user_type != 'admin':
+                return
             # Check if clinic request frame needs to be populated
             if len(self.all_clinic_request_frame) == 0:
                 self.set_up_clinic_request_frame()
@@ -8379,6 +8867,9 @@ class Admin:
                 if active:
                     self.switch(k, self.all_clinic_request_frame)
         elif frame == self.security_frame:
+            # ADD: RBAC check
+            if self.user_type != 'admin':
+                return
             # Security frame is populated differently - check if it needs setup
             if not hasattr(self, 'security_frame_setup_done') or not self.security_frame_setup_done:
                 self.set_up_security_frame()
@@ -10099,7 +10590,7 @@ class Admin:
         reset_back_button.place(x=20, y=15)
         save_button = ttk.Button(reset_frame, text='Save', style='green_button.TButton', cursor='hand2', width=6)
         save_button.place(x=945, y=15)
-        save_error_label = tk.Label(reset_frame, text='', anchor='e', font=('Open Sans', 8), bg='white', fg='red', width=30)
+        save_error_label = tk.Label(reset_frame, text='', anchor='e', font=('Open Sans', 8), bg='white', fg='red', width=60)
         save_error_label.place(x=750, y=25)
         reset_canvas = tk.Canvas(reset_frame, width=1030, height=430, bg='white', highlightthickness=0)
         reset_canvas.place(x=0, y=75)
@@ -11257,6 +11748,4 @@ if __name__ == "__main__":
     def on_closing():
         stop_payment_server()  # Clean shutdown
         root.destroy()
-
-
     root.protocol("WM_DELETE_WINDOW", on_closing)
