@@ -1,0 +1,35 @@
+# Call a Doctor - Python Dependencies
+# Install with: pip install -r requirements.txt
+
+# Database
+mysql-connector-python>=8.0.0
+
+# GUI Framework
+# tkinter comes with Python, but may need separate installation on Linux:
+# sudo apt-get install python3-tk
+
+# Image Processing
+Pillow>=9.0.0
+
+# Environment Variables
+python-dotenv>=0.19.0
+
+# Web Framework (for Auth API)
+flask>=2.0.0
+flask-cors>=3.0.0
+
+# GUI Calendar Widget
+tkcalendar>=1.6.0
+
+# Payment Processing
+stripe>=3.0.0
+
+# Cryptography
+cryptography>=3.4.0
+
+# JWT Authentication
+PyJWT>=2.3.0
+
+# HTTP Requests
+requests>=2.27.0
+
